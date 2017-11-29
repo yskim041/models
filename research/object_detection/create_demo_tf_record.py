@@ -84,6 +84,7 @@ def dict_to_tf_example(data,
   truncated = []
   poses = []
   difficult_obj = []
+
   for obj in data['object']:
     difficult = bool(int(obj['difficult']))
     if ignore_difficult_instances and difficult:
@@ -97,7 +98,7 @@ def dict_to_tf_example(data,
     ymax.append(float(obj['bndbox']['ymax']) / height)
     class_name = get_class_name_from_filename(data['filename'])
     classes_text.append(class_name.encode('utf8'))
-    classes.append(label_map_dict[class_name])
+    classes.append(label_map_dict[obj['name']])
     truncated.append(int(obj['truncated']))
     poses.append(obj['pose'].encode('utf8'))
 
