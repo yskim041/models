@@ -94,5 +94,3 @@ ENV/
 # PyCharm
 .idea/
 
-# proto
-protos/
