@@ -35,6 +35,7 @@ def get_class_name_from_filename(file_name):
   Returns:
     A string of the class name.
   """
+  print(file_name)
   match = re.match(r'([A-Za-z_]+)(_[0-9]+\.jpg)', file_name, re.I)
   return match.groups()[0]
 
@@ -63,7 +64,7 @@ def dict_to_tf_example(data,
   Raises:
     ValueError: if the image pointed to by data['filename'] is not a valid JPEG
   """
-  img_path = os.path.join(image_subdirectory, data['filename'])
+  img_path = data['path']
   with tf.gfile.GFile(img_path, 'rb') as fid:
     encoded_jpg = fid.read()
   encoded_jpg_io = io.BytesIO(encoded_jpg)
