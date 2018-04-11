@@ -17,11 +17,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow as tf
-import tensorflow.contrib.eager as tfe
+import tensorflow as tf  # pylint: disable=g-bad-import-order
+import tensorflow.contrib.eager as tfe  # pylint: disable=g-bad-import-order
 
-import mnist
-import mnist_eager
+from official.mnist import mnist
+from official.mnist import mnist_eager
 
 
 def device():
@@ -60,6 +60,7 @@ def evaluate(defun=False):
 
 
 class MNISTTest(tf.test.TestCase):
+  """Run tests for MNIST eager loop."""
 
   def test_train(self):
     train(defun=False)
