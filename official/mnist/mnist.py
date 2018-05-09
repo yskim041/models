@@ -17,20 +17,20 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import argparse
-import sys
-
+from absl import app as absl_app
+from absl import flags
 import tensorflow as tf  # pylint: disable=g-bad-import-order
 
 from official.mnist import dataset
-from official.utils.arg_parsers import parsers
+from official.utils.flags import core as flags_core
 from official.utils.logs import hooks_helper
 from official.utils.misc import model_helpers
+
 
 LEARNING_RATE = 1e-4
 
 
-class Model(tf.keras.Model):
+def create_model(data_format):
   """Model to recognize digits in the MNIST dataset.
 
   Network structure is equivalent to:
@@ -38,60 +38,67 @@ class Model(tf.keras.Model):
   and
   https://github.com/tensorflow/models/blob/master/tutorials/image/mnist/convolutional.py
 
-  But written as a tf.keras.Model using the tf.layers API.
+  But uses the tf.keras API.
+
+  Args:
+    data_format: Either 'channels_first' or 'channels_last'. 'channels_first' is
+      typically faster on GPUs while 'channels_last' is typically faster on
+      CPUs. See
+      https://www.tensorflow.org/performance/performance_guide#data_formats
+
+  Returns:
+    A tf.keras.Model.
   """
+  if data_format == 'channels_first':
+    input_shape = [1, 28, 28]
+  else:
+    assert data_format == 'channels_last'
+    input_shape = [28, 28, 1]
 
-  def __init__(self, data_format):
-    """Creates a model for classifying a hand-written digit.
+  l = tf.keras.layers
+  max_pool = l.MaxPooling2D(
+      (2, 2), (2, 2), padding='same', data_format=data_format)
+  # The model consists of a sequential chain of layers, so tf.keras.Sequential
+  # (a subclass of tf.keras.Model) makes for a compact description.
+  return tf.keras.Sequential(
+      [
+          l.Reshape(
+              target_shape=input_shape,
+              input_shape=(28 * 28,)),
+          l.Conv2D(
+              32,
+              5,
+              padding='same',
+              data_format=data_format,
+              activation=tf.nn.relu),
+          max_pool,
+          l.Conv2D(
+              64,
+              5,
+              padding='same',
+              data_format=data_format,
+              activation=tf.nn.relu),
+          max_pool,
+          l.Flatten(),
+          l.Dense(1024, activation=tf.nn.relu),
+          l.Dropout(0.4),
+          l.Dense(10)
+      ])
 
-    Args:
-      data_format: Either 'channels_first' or 'channels_last'.
-        'channels_first' is typically faster on GPUs while 'channels_last' is
-        typically faster on CPUs. See
-        https://www.tensorflow.org/performance/performance_guide#data_formats
-    """
-    super(Model, self).__init__()
-    if data_format == 'channels_first':
-      self._input_shape = [-1, 1, 28, 28]
-    else:
-      assert data_format == 'channels_last'
-      self._input_shape = [-1, 28, 28, 1]
 
-    self.conv1 = tf.layers.Conv2D(
-        32, 5, padding='same', data_format=data_format, activation=tf.nn.relu)
-    self.conv2 = tf.layers.Conv2D(
-        64, 5, padding='same', data_format=data_format, activation=tf.nn.relu)
-    self.fc1 = tf.layers.Dense(1024, activation=tf.nn.relu)
-    self.fc2 = tf.layers.Dense(10)
-    self.dropout = tf.layers.Dropout(0.4)
-    self.max_pool2d = tf.layers.MaxPooling2D(
-        (2, 2), (2, 2), padding='same', data_format=data_format)
-
-  def __call__(self, inputs, training):
-    """Add operations to classify a batch of input images.
-
-    Args:
-      inputs: A Tensor representing a batch of input images.
-      training: A boolean. Set to True to add operations required only when
-        training the classifier.
-
-    Returns:
-      A logits Tensor with shape [<batch_size>, 10].
-    """
-    y = tf.reshape(inputs, self._input_shape)
-    y = self.conv1(y)
-    y = self.max_pool2d(y)
-    y = self.conv2(y)
-    y = self.max_pool2d(y)
-    y = tf.layers.flatten(y)
-    y = self.fc1(y)
-    y = self.dropout(y, training=training)
-    return self.fc2(y)
+def define_mnist_flags():
+  flags_core.define_base(multi_gpu=True, num_gpu=False)
+  flags_core.define_image()
+  flags.adopt_module_key_flags(flags_core)
+  flags_core.set_defaults(data_dir='/tmp/mnist_data',
+                          model_dir='/tmp/mnist_model',
+                          batch_size=100,
+                          train_epochs=40)
 
 
 def model_fn(features, labels, mode, params):
   """The model_fn argument for creating an Estimator."""
-  model = Model(params['data_format'])
+  model = create_model(params['data_format'])
   image = features
   if isinstance(image, dict):
     image = features['image']
@@ -141,8 +148,7 @@ def model_fn(features, labels, mode, params):
         eval_metric_ops={
             'accuracy':
                 tf.metrics.accuracy(
-                    labels=labels,
-                    predictions=tf.argmax(logits, axis=1)),
+                    labels=labels, predictions=tf.argmax(logits, axis=1)),
         })
 
 
@@ -176,14 +182,17 @@ def validate_batch_size_for_multi_gpu(batch_size):
     raise ValueError(err)
 
 
-def main(argv):
-  parser = MNISTArgParser()
-  flags = parser.parse_args(args=argv[1:])
+def run_mnist(flags_obj):
+  """Run MNIST training and eval loop.
+
+  Args:
+    flags_obj: An object containing parsed flag values.
+  """
 
   model_function = model_fn
 
-  if flags.multi_gpu:
-    validate_batch_size_for_multi_gpu(flags.batch_size)
+  if flags_obj.multi_gpu:
+    validate_batch_size_for_multi_gpu(flags_obj.batch_size)
 
     # There are two steps required if using multi-GPU: (1) wrap the model_fn,
     # and (2) wrap the optimizer. The first happens here, and (2) happens
@@ -191,16 +200,16 @@ def main(argv):
     model_function = tf.contrib.estimator.replicate_model_fn(
         model_fn, loss_reduction=tf.losses.Reduction.MEAN)
 
-  data_format = flags.data_format
+  data_format = flags_obj.data_format
   if data_format is None:
     data_format = ('channels_first'
                    if tf.test.is_built_with_cuda() else 'channels_last')
   mnist_classifier = tf.estimator.Estimator(
       model_fn=model_function,
-      model_dir=flags.model_dir,
+      model_dir=flags_obj.model_dir,
       params={
           'data_format': data_format,
-          'multi_gpu': flags.multi_gpu
+          'multi_gpu': flags_obj.multi_gpu
       })
 
   # Set up training and evaluation input functions.
@@ -210,58 +219,46 @@ def main(argv):
     # When choosing shuffle buffer sizes, larger sizes result in better
     # randomness, while smaller sizes use less memory. MNIST is a small
     # enough dataset that we can easily shuffle the full epoch.
-    ds = dataset.train(flags.data_dir)
-    ds = ds.cache().shuffle(buffer_size=50000).batch(flags.batch_size)
+    ds = dataset.train(flags_obj.data_dir)
+    ds = ds.cache().shuffle(buffer_size=50000).batch(flags_obj.batch_size)
 
     # Iterate through the dataset a set number (`epochs_between_evals`) of times
     # during each training session.
-    ds = ds.repeat(flags.epochs_between_evals)
+    ds = ds.repeat(flags_obj.epochs_between_evals)
     return ds
 
   def eval_input_fn():
-    return dataset.test(flags.data_dir).batch(
-        flags.batch_size).make_one_shot_iterator().get_next()
+    return dataset.test(flags_obj.data_dir).batch(
+        flags_obj.batch_size).make_one_shot_iterator().get_next()
 
   # Set up hook that outputs training logs every 100 steps.
   train_hooks = hooks_helper.get_train_hooks(
-      flags.hooks, batch_size=flags.batch_size)
+      flags_obj.hooks, batch_size=flags_obj.batch_size)
 
   # Train and evaluate model.
-  for _ in range(flags.train_epochs // flags.epochs_between_evals):
+  for _ in range(flags_obj.train_epochs // flags_obj.epochs_between_evals):
     mnist_classifier.train(input_fn=train_input_fn, hooks=train_hooks)
     eval_results = mnist_classifier.evaluate(input_fn=eval_input_fn)
     print('\nEvaluation results:\n\t%s\n' % eval_results)
 
-    if model_helpers.past_stop_threshold(
-        flags.stop_threshold, eval_results['accuracy']):
+    if model_helpers.past_stop_threshold(flags_obj.stop_threshold,
+                                         eval_results['accuracy']):
       break
 
   # Export the model
-  if flags.export_dir is not None:
+  if flags_obj.export_dir is not None:
     image = tf.placeholder(tf.float32, [None, 28, 28])
     input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
         'image': image,
     })
-    mnist_classifier.export_savedmodel(flags.export_dir, input_fn)
+    mnist_classifier.export_savedmodel(flags_obj.export_dir, input_fn)
 
 
-class MNISTArgParser(argparse.ArgumentParser):
-  """Argument parser for running MNIST model."""
-
-  def __init__(self):
-    super(MNISTArgParser, self).__init__(parents=[
-        parsers.BaseParser(),
-        parsers.ImageModelParser(),
-        parsers.ExportParser(),
-    ])
-
-    self.set_defaults(
-        data_dir='/tmp/mnist_data',
-        model_dir='/tmp/mnist_model',
-        batch_size=100,
-        train_epochs=40)
+def main(_):
+  run_mnist(flags.FLAGS)
 
 
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
-  main(argv=sys.argv)
+  define_mnist_flags()
+  absl_app.run(main)
