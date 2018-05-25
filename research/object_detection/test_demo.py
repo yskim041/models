@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+
+from __future__ import division
+
 import numpy as np
 import os
 import sys
@@ -18,15 +22,15 @@ from utils import label_map_util
 
 from utils import visualization_utils as vis_util
 
-MODEL_BASE_DIR = 'demo_data'
+MODEL_BASE_DIR = '/mnt/hard_data/Data/foods/'
 
 # Path to frozen detection graph. This is the actual model that is used for the object detection.
 PATH_TO_CKPT = os.path.join(MODEL_BASE_DIR, 'graph', 'frozen_inference_graph.pb')
 
 # List of the strings that is used to add correct label for each box.
-PATH_TO_LABELS = os.path.join(MODEL_BASE_DIR, 'data', 'demo_label_map.pbtxt')
+PATH_TO_LABELS = os.path.join(MODEL_BASE_DIR, 'data', 'food_label_map.pbtxt')
 
-NUM_CLASSES = 5
+NUM_CLASSES = 47
 
 detection_graph = tf.Graph()
 with detection_graph.as_default():
@@ -40,7 +44,6 @@ label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
 categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
 category_index = label_map_util.create_category_index(categories)
 
-
 def load_image_into_numpy_array(image):
   (im_width, im_height) = image.size
   return np.array(image.getdata()).reshape(
@@ -52,7 +55,8 @@ def load_image_into_numpy_array(image):
 # image2.jpg
 # If you want to test the code with your images, just add path to the images to the TEST_IMAGE_PATHS.
 PATH_TO_TEST_IMAGES_DIR = 'test_images'
-TEST_IMAGE_PATHS = [ os.path.join('/home/yskim/Data/demo/test/', 'test_%04d.jpg' % i) for i in range(1) ]
+#TEST_IMAGE_PATHS = [ os.path.join(PATH_TO_TEST_IMAGES_DIR, 'apple_%d.jpg' % i) for i in range(1, 6) ]
+TEST_IMAGE_PATHS = [ os.path.join(PATH_TO_TEST_IMAGES_DIR, 'test_%d.jpg' % i) for i in range(1, 6) ]
 # TEST_IMAGE_PATHS = [ os.path.join(PATH_TO_TEST_IMAGES_DIR, 'image{}.jpg'.format(i)) for i in range(1, 3) ]
 
 # Size, in inches, of the output images.
@@ -74,6 +78,10 @@ with detection_graph.as_default():
     detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
     detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
     num_detections = detection_graph.get_tensor_by_name('num_detections:0')
+
+    plt.figure(figsize=IMAGE_SIZE)
+    rst_idx = 0
+
     for image_path in TEST_IMAGE_PATHS:
       image = Image.open(image_path)
       # the array based representation of the image will be used later in order to prepare the
@@ -85,6 +93,23 @@ with detection_graph.as_default():
       (boxes, scores, classes, num) = sess.run(
           [detection_boxes, detection_scores, detection_classes, num_detections],
           feed_dict={image_tensor: image_np_expanded})
+
+      threshold = 0.7
+      valid_scores = [score for score in scores[0] if score > threshold]
+      midpoints = []
+
+      for val in range(0, len(valid_scores)):
+        bounding_box = boxes[0][val]
+        # [ymin, xmin, ymax, xmax]
+        midpoint_y = (bounding_box[0] + bounding_box[2]) / 2.0  * image_np.shape[0]
+        midpoint_x = (bounding_box[1] + bounding_box[3]) / 2.0  * image_np.shape[1]
+
+        # import IPython; IPython.embed()
+
+        image_np[int(midpoint_y) - 5: int(midpoint_y) + 5,
+                 int(midpoint_x) - 5:int(midpoint_x) + 5, :3] = [0, 0, 255.0]
+        midpoints.append([midpoint_x, midpoint_y])
+
       # Visualization of the results of a detection.
       vis_util.visualize_boxes_and_labels_on_image_array(
           image_np,
@@ -93,11 +118,19 @@ with detection_graph.as_default():
           np.squeeze(scores),
           category_index,
           use_normalized_coordinates=True,
-          line_thickness=8)
-      plt.figure(figsize=IMAGE_SIZE)
-      plt.imshow(image_np)
+          max_boxes_to_draw=len(valid_scores),
+          min_score_thresh=threshold,
+          line_thickness=4)
 
-plt.show()
+      plt.clf()
+      plt.imshow(image_np)
+      plt.tight_layout()
+      plt.savefig('rst_%03d.png' % rst_idx)
+      rst_idx += 1
+
+plt.close()
+
 
 # End of script
+
 
